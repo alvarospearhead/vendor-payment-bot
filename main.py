@@ -36,24 +36,32 @@ async def webhook(request: Request):
 
     try:
 
-        entry = data["entry"][0]
-        changes = entry["changes"][0]
-        value = changes["value"]
+        print("FULL DATA:", data)
 
-        messages = value.get("messages")
+        message = data["entry"][0]["changes"][0]["value"]["messages"][0]
 
-        if messages:
+        sender = message["from"]
 
-            phone_number = messages[0]["from"]
-            message_text = messages[0]["text"]["body"]
+        # limpiar formato
+        sender = sender.replace("+", "").replace(" ", "")
 
-            send_whatsapp_message(
-                phone_number,
-                f"Recibí tu mensaje: {message_text}"
-            )
+        # fix para numeros de argentina
+        if sender.startswith("549"):
+            sender = "54" + sender[3:]
+
+        print("SENDER FINAL:", sender)
+
+        message_text = message["text"]["body"]
+
+        print("MESSAGE:", message_text)
+
+        send_whatsapp_message(
+            sender,
+            f"Hola 👋 Recibí tu mensaje: {message_text}"
+        )
 
     except Exception as e:
-        print(e)
+        print("ERROR:", e)
 
     return {"status": "received"}
 
@@ -76,6 +84,10 @@ def send_whatsapp_message(to, message):
         }
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(
+        url,
+        headers=headers,
+        json=data
+    )
 
-    print(response.text)
+    print("WHATSAPP RESPONSE:", response.text)
