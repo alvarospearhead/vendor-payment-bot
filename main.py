@@ -1,6 +1,10 @@
 from fastapi import FastAPI, Request
 import requests
 import os
+import json
+import gspread
+
+from google.oauth2.service_account import Credentials
 
 app = FastAPI()
 
@@ -8,67 +12,31 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
+# -----------------------------
+# GOOGLE SHEETS
+# -----------------------------
 
-@app.get("/")
-def home():
-    return {"message": "Vendor Payment Bot Running"}
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets"
+]
 
+creds = Credentials.from_service_account_file(
+    "service_account.json",
+    scopes=SCOPES
+)
 
-@app.get("/webhook")
-async def verify_webhook(request: Request):
+client = gspread.authorize(creds)
 
-    mode = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
-
-    if mode and token:
-
-        if mode == "subscribe" and token == VERIFY_TOKEN:
-            return int(challenge)
-
-    return {"error": "Verification failed"}
+sheet = client.open("Vendor Payments").sheet1
 
 
-@app.post("/webhook")
-async def webhook(request: Request):
-
-    data = await request.json()
-
-    try:
-
-        print("FULL DATA:", data)
-
-        message = data["entry"][0]["changes"][0]["value"]["messages"][0]
-
-        sender = message["from"]
-
-        # limpiar formato
-        sender = sender.replace("+", "").replace(" ", "")
-
-        # fix para numeros de argentina
-        if sender.startswith("549"):
-            sender = "54" + sender[3:]
-
-        print("SENDER FINAL:", sender)
-
-        message_text = message["text"]["body"]
-
-        print("MESSAGE:", message_text)
-
-        send_whatsapp_message(
-            sender,
-            f"Hola 👋 Recibí tu mensaje: {message_text}"
-        )
-
-    except Exception as e:
-        print("ERROR:", e)
-
-    return {"status": "received"}
-
+# -----------------------------
+# SEND WHATSAPP MESSAGE
+# -----------------------------
 
 def send_whatsapp_message(to, message):
 
-    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v25.0/{PHONE_NUMBER_ID}/messages"
 
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
@@ -84,10 +52,80 @@ def send_whatsapp_message(to, message):
         }
     }
 
-    response = requests.post(
-        url,
-        headers=headers,
-        json=data
-    )
+    response = requests.post(url, headers=headers, json=data)
 
-    print("WHATSAPP RESPONSE:", response.text)
+    print(response.text)
+
+
+# -----------------------------
+# WEBHOOK VERIFY
+# -----------------------------
+
+@app.get("/webhook")
+async def verify_webhook(request: Request):
+
+    params = request.query_params
+
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return int(challenge)
+
+    return {"error": "Verification failed"}
+
+
+# -----------------------------
+# RECEIVE MESSAGES
+# -----------------------------
+
+@app.post("/webhook")
+async def receive_message(request: Request):
+
+    body = await request.json()
+
+    print(json.dumps(body, indent=2))
+
+    try:
+
+        message = body["entry"][0]["changes"][0]["value"]["messages"][0]
+
+        from_number = message["from"]
+        text = message["text"]["body"].strip()
+
+        print("MESSAGE:", text)
+
+        # Buscar vendor en Google Sheets
+        records = sheet.get_all_records()
+
+        found = False
+
+        for row in records:
+
+            vendor = str(row["Vendor"]).lower()
+
+            if vendor == text.lower():
+
+                amount = row["Amount Due"]
+
+                response_message = (
+                    f"Vendor: {row['Vendor']}\n"
+                    f"Amount Due: ${amount}"
+                )
+
+                send_whatsapp_message(from_number, response_message)
+
+                found = True
+                break
+
+        if not found:
+            send_whatsapp_message(
+                from_number,
+                "Vendor not found."
+            )
+
+    except Exception as e:
+        print("ERROR:", str(e))
+
+    return {"status": "ok"}
