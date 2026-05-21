@@ -11,7 +11,7 @@ def home():
 @app.post("/webhook")
 async def webhook(request: Request):
 
-    data = await request.form()
+    data = await request.json()
 
     print(data)
 
