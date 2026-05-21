@@ -31,7 +31,7 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-sheet = client.open("Vendor Payments").sheet1
+sheet = client.open("DATA_BASE_REQUEST").worksheet("vendors")
 
 
 # -----------------------------
