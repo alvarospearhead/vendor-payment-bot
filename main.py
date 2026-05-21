@@ -17,22 +17,31 @@ GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 # GOOGLE SHEETS
 # -----------------------------
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+try:
 
-creds_dict = json.loads(GOOGLE_CREDENTIALS)
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
-creds = Credentials.from_service_account_info(
-    creds_dict,
-    scopes=SCOPES
-)
+    creds_dict = json.loads(GOOGLE_CREDENTIALS)
 
-client = gspread.authorize(creds)
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=SCOPES
+    )
 
-sheet = client.open("DATA_BASE_REQUEST").worksheet("vendors")
+    client = gspread.authorize(creds)
 
+    sheet = client.open("DATA_BASE_REQUEST").worksheet("vendors")
+
+    print("GOOGLE SHEETS CONNECTED")
+
+except Exception as e:
+
+    print("GOOGLE SHEETS ERROR:", str(e))
+
+    sheet = None
 
 # -----------------------------
 # SEND WHATSAPP MESSAGE
@@ -56,10 +65,13 @@ def send_whatsapp_message(to, message):
         }
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(
+        url,
+        headers=headers,
+        json=data
+    )
 
     print("WHATSAPP RESPONSE:", response.text)
-
 
 # -----------------------------
 # HOME
@@ -68,7 +80,6 @@ def send_whatsapp_message(to, message):
 @app.get("/")
 def home():
     return {"message": "Vendor Payment Bot Running"}
-
 
 # -----------------------------
 # WEBHOOK VERIFY
@@ -88,7 +99,6 @@ async def verify_webhook(request: Request):
 
     return {"error": "Verification failed"}
 
-
 # -----------------------------
 # RECEIVE MESSAGES
 # -----------------------------
@@ -101,6 +111,7 @@ async def receive_message(request: Request):
     print(json.dumps(body, indent=2))
 
     try:
+
         message = body["entry"][0]["changes"][0]["value"]["messages"][0]
 
         from_number = message["from"]
@@ -109,33 +120,47 @@ async def receive_message(request: Request):
         print("FROM:", from_number)
         print("MESSAGE:", text)
 
+        if sheet is None:
+
+            send_whatsapp_message(
+                from_number,
+                "Google Sheets connection failed."
+            )
+
+            return {"status": "error"}
+
         records = sheet.get_all_records()
 
         found = False
 
         for row in records:
-            vendor = str(row["Vendor"]).lower().strip()
+
+            vendor = str(row["vendor_name"]).lower().strip()
 
             if vendor == text.lower():
-                amount = row["Amount Due"]
 
                 response_message = (
-                    f"Vendor: {row['Vendor']}\n"
-                    f"Amount Due: ${amount}"
+                    f"Vendor: {row['vendor_name']}\n"
+                    f"Vendor ID: {row['vendor_id']}"
                 )
 
-                send_whatsapp_message(from_number, response_message)
+                send_whatsapp_message(
+                    from_number,
+                    response_message
+                )
 
                 found = True
                 break
 
         if not found:
+
             send_whatsapp_message(
                 from_number,
                 "Vendor not found."
             )
 
     except Exception as e:
+
         print("ERROR:", str(e))
 
     return {"status": "ok"}
