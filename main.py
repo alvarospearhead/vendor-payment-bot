@@ -11,6 +11,7 @@ app = FastAPI()
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
 # -----------------------------
 # GOOGLE SHEETS
@@ -20,8 +21,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets"
 ]
 
-creds = Credentials.from_service_account_file(
-    "service_account.json",
+creds_dict = json.loads(GOOGLE_CREDENTIALS)
+
+creds = Credentials.from_service_account_info(
+    creds_dict,
     scopes=SCOPES
 )
 
@@ -54,7 +57,16 @@ def send_whatsapp_message(to, message):
 
     response = requests.post(url, headers=headers, json=data)
 
-    print(response.text)
+    print("WHATSAPP RESPONSE:", response.text)
+
+
+# -----------------------------
+# HOME
+# -----------------------------
+
+@app.get("/")
+def home():
+    return {"message": "Vendor Payment Bot Running"}
 
 
 # -----------------------------
@@ -88,25 +100,22 @@ async def receive_message(request: Request):
     print(json.dumps(body, indent=2))
 
     try:
-
         message = body["entry"][0]["changes"][0]["value"]["messages"][0]
 
         from_number = message["from"]
         text = message["text"]["body"].strip()
 
+        print("FROM:", from_number)
         print("MESSAGE:", text)
 
-        # Buscar vendor en Google Sheets
         records = sheet.get_all_records()
 
         found = False
 
         for row in records:
-
-            vendor = str(row["Vendor"]).lower()
+            vendor = str(row["Vendor"]).lower().strip()
 
             if vendor == text.lower():
-
                 amount = row["Amount Due"]
 
                 response_message = (
