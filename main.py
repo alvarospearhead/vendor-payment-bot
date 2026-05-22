@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import gspread
+from datetime import datetime
 
 from google.oauth2.service_account import Credentials
 
@@ -38,6 +39,7 @@ try:
     vendors_sheet = spreadsheet.worksheet("vendors")
     projects_sheet = spreadsheet.worksheet("projects")
     payment_requests_sheet = spreadsheet.worksheet("payment_request")
+    conversation_sheet = spreadsheet.worksheet("conversation_state")
 
     print("GOOGLE SHEETS CONNECTED")
 
@@ -46,8 +48,6 @@ except Exception as e:
     print("GOOGLE SHEETS ERROR:", str(e))
 
     vendors_sheet = None
-    projects_sheet = None
-    payment_requests_sheet = None
 
 # -----------------------------
 # SEND WHATSAPP MESSAGE
@@ -106,7 +106,80 @@ async def verify_webhook(request: Request):
     return {"error": "Verification failed"}
 
 # -----------------------------
-# RECEIVE MESSAGES
+# GET CONVERSATION
+# -----------------------------
+
+def get_conversation(phone_number):
+
+    conversations = conversation_sheet.get_all_records()
+
+    for row in conversations:
+
+        if str(row["phone_number"]) == str(phone_number):
+            return row
+
+    return None
+
+# -----------------------------
+# SAVE CONVERSATION
+# -----------------------------
+
+def save_conversation(
+    phone_number,
+    current_step,
+    selected_project_id="",
+    requested_amount=""
+):
+
+    conversations = conversation_sheet.get_all_records()
+
+    row_number = None
+
+    for index, row in enumerate(conversations, start=2):
+
+        if str(row["phone_number"]) == str(phone_number):
+
+            row_number = index
+            break
+
+    if row_number:
+
+        conversation_sheet.update(
+            f"A{row_number}:D{row_number}",
+            [[
+                phone_number,
+                current_step,
+                selected_project_id,
+                requested_amount
+            ]]
+        )
+
+    else:
+
+        conversation_sheet.append_row([
+            phone_number,
+            current_step,
+            selected_project_id,
+            requested_amount
+        ])
+
+# -----------------------------
+# DELETE CONVERSATION
+# -----------------------------
+
+def delete_conversation(phone_number):
+
+    conversations = conversation_sheet.get_all_records()
+
+    for index, row in enumerate(conversations, start=2):
+
+        if str(row["phone_number"]) == str(phone_number):
+
+            conversation_sheet.delete_rows(index)
+            break
+
+# -----------------------------
+# RECEIVE MESSAGE
 # -----------------------------
 
 @app.post("/webhook")
@@ -122,12 +195,10 @@ async def receive_message(request: Request):
 
         from_number = message["from"]
 
-        # NORMALIZAR NUMERO
         from_number = from_number.replace("+", "")
         from_number = from_number.replace(" ", "")
         from_number = from_number.replace("-", "")
 
-        # FIX ARGENTINA
         if from_number.startswith("549"):
             from_number = "54" + from_number[3:]
 
@@ -135,19 +206,6 @@ async def receive_message(request: Request):
 
         print("FROM:", from_number)
         print("MESSAGE:", text)
-
-        # -----------------------------
-        # VALIDAR SHEETS
-        # -----------------------------
-
-        if vendors_sheet is None:
-
-            send_whatsapp_message(
-                from_number,
-                "Google Sheets connection failed."
-            )
-
-            return {"status": "error"}
 
         # -----------------------------
         # GET VENDOR
@@ -165,7 +223,6 @@ async def receive_message(request: Request):
             phone = phone.replace(" ", "")
             phone = phone.replace("-", "")
 
-            # FIX ARGENTINA
             if phone.startswith("549"):
                 phone = "54" + phone[3:]
 
@@ -187,65 +244,66 @@ async def receive_message(request: Request):
         vendor_name = vendor_found["vendor_name"]
 
         # -----------------------------
-        # GET ACTIVE PROJECTS
+        # GET CONVERSATION STATE
         # -----------------------------
 
-        projects = projects_sheet.get_all_records()
+        conversation = get_conversation(from_number)
 
-        active_projects = []
+        # ======================================================
+        # STEP 1 - START FLOW
+        # ======================================================
 
-        for project in projects:
+        if conversation is None:
 
-            if (
-                project["vendor_id"] == vendor_id
-                and str(project["active"]).upper() == "YES"
-            ):
+            projects = projects_sheet.get_all_records()
 
-                active_projects.append(project)
+            active_projects = []
 
-        # -----------------------------
-        # GET PENDING REQUESTS
-        # -----------------------------
+            for project in projects:
 
-        payment_requests = payment_requests_sheet.get_all_records()
+                if (
+                    project["vendor_id"] == vendor_id
+                    and str(project["active"]).upper() == "YES"
+                ):
 
-        blocked_project_ids = []
+                    active_projects.append(project)
 
-        for request_row in payment_requests:
+            payment_requests = payment_requests_sheet.get_all_records()
 
-            if (
-                request_row["vendor_id"] == vendor_id
-                and str(request_row["status"]).lower() == "pending"
-            ):
+            blocked_project_ids = []
 
-                blocked_project_ids.append(
-                    request_row["project_id"]
+            for request_row in payment_requests:
+
+                if (
+                    request_row["vendor_id"] == vendor_id
+                    and str(request_row["status"]).lower() == "pending"
+                ):
+
+                    blocked_project_ids.append(
+                        request_row["project_id"]
+                    )
+
+            available_projects = []
+
+            for project in active_projects:
+
+                if project["project_id"] not in blocked_project_ids:
+
+                    available_projects.append(project)
+
+            if len(available_projects) == 0:
+
+                response_message = (
+                    f"Hola {vendor_name} 👋\n\n"
+                    "No tienes proyectos disponibles."
                 )
 
-        # -----------------------------
-        # FILTER AVAILABLE PROJECTS
-        # -----------------------------
+                send_whatsapp_message(
+                    from_number,
+                    response_message
+                )
 
-        available_projects = []
-
-        for project in active_projects:
-
-            if project["project_id"] not in blocked_project_ids:
-
-                available_projects.append(project)
-
-        # -----------------------------
-        # BUILD RESPONSE
-        # -----------------------------
-
-        if len(available_projects) == 0:
-
-            response_message = (
-                f"Hola {vendor_name} 👋\n\n"
-                "No tienes proyectos disponibles para nuevos payment requests."
-            )
-
-        else:
+                return {"status": "ok"}
 
             response_message = (
                 f"Hola {vendor_name} 👋\n\n"
@@ -263,10 +321,119 @@ async def receive_message(request: Request):
                 "Responde con el número del proyecto."
             )
 
-        send_whatsapp_message(
-            from_number,
-            response_message
-        )
+            save_conversation(
+                from_number,
+                "waiting_project"
+            )
+
+            send_whatsapp_message(
+                from_number,
+                response_message
+            )
+
+            return {"status": "ok"}
+
+        # ======================================================
+        # STEP 2 - WAITING PROJECT
+        # ======================================================
+
+        current_step = conversation["current_step"]
+
+        if current_step == "waiting_project":
+
+            selected_index = int(text)
+
+            projects = projects_sheet.get_all_records()
+
+            vendor_projects = []
+
+            for project in projects:
+
+                if (
+                    project["vendor_id"] == vendor_id
+                    and str(project["active"]).upper() == "YES"
+                ):
+
+                    vendor_projects.append(project)
+
+            selected_project = vendor_projects[selected_index - 1]
+
+            project_id = selected_project["project_id"]
+
+            save_conversation(
+                from_number,
+                "waiting_amount",
+                project_id
+            )
+
+            send_whatsapp_message(
+                from_number,
+                (
+                    f"Proyecto seleccionado:\n"
+                    f"{selected_project['project_name']}\n\n"
+                    f"Balance disponible: "
+                    f"${selected_project['available_balance']}\n\n"
+                    f"¿Cuánto deseas solicitar?"
+                )
+            )
+
+            return {"status": "ok"}
+
+        # ======================================================
+        # STEP 3 - WAITING AMOUNT
+        # ======================================================
+
+        if current_step == "waiting_amount":
+
+            requested_amount = float(text)
+
+            save_conversation(
+                from_number,
+                "waiting_description",
+                conversation["selected_project_id"],
+                requested_amount
+            )
+
+            send_whatsapp_message(
+                from_number,
+                "Describe el trabajo realizado."
+            )
+
+            return {"status": "ok"}
+
+        # ======================================================
+        # STEP 4 - WAITING DESCRIPTION
+        # ======================================================
+
+        if current_step == "waiting_description":
+
+            description = text
+
+            request_id = f"PR-{datetime.now().strftime('%H%M%S')}"
+
+            payment_requests_sheet.append_row([
+                request_id,
+                vendor_id,
+                conversation["selected_project_id"],
+                conversation["requested_amount"],
+                "Pending",
+                "Week 1",
+                description,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ])
+
+            send_whatsapp_message(
+                from_number,
+                (
+                    "✅ Payment Request creado\n\n"
+                    f"Request ID: {request_id}\n"
+                    f"Status: Pending"
+                )
+            )
+
+            delete_conversation(from_number)
+
+            return {"status": "ok"}
 
     except Exception as e:
 
