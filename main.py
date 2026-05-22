@@ -210,6 +210,11 @@ async def receive_message(request: Request):
 
         text = message["text"]["body"].strip()
 
+        # RESET CONVERSATION
+        if text.lower() in ["hola", "menu", "reset", "start"]:
+
+            delete_conversation(from_number)
+
         print("FROM:", from_number)
         print("MESSAGE:", text)
 
@@ -356,6 +361,15 @@ async def receive_message(request: Request):
 
         if current_step == "waiting_project":
 
+            if not text.isdigit():
+
+                send_whatsapp_message(
+                    from_number,
+                    "❌ Responde solo con el número del proyecto."
+                )
+
+                return {"status": "ok"}
+
             selected_index = int(text)
 
             available_project_ids = (
@@ -372,6 +386,15 @@ async def receive_message(request: Request):
                 if str(project["project_id"]) in available_project_ids:
 
                     filtered_projects.append(project)
+
+            if selected_index < 1 or selected_index > len(filtered_projects):
+
+                send_whatsapp_message(
+                    from_number,
+                    "❌ Proyecto inválido."
+                )
+
+                return {"status": "ok"}
 
             selected_project = filtered_projects[selected_index - 1]
 
@@ -404,7 +427,15 @@ async def receive_message(request: Request):
 
         if current_step == "waiting_amount":
 
-            requested_amount = float(text)
+            try:
+                requested_amount = float(text)
+            except:
+                send_whatsapp_message(
+                    from_number,
+                    "❌ Ingresa un monto válido."
+                )
+
+                return {"status": "ok"}
 
             save_conversation(
                 from_number,
@@ -442,10 +473,6 @@ async def receive_message(request: Request):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ])
 
-            # ---------------------------------
-            # CHECK REMAINING PROJECTS
-            # ---------------------------------
-
             projects = projects_sheet.get_all_records()
 
             payment_requests = payment_requests_sheet.get_all_records()
@@ -476,10 +503,7 @@ async def receive_message(request: Request):
 
                         remaining_projects.append(project)
 
-            # ---------------------------------
-            # MORE PROJECTS AVAILABLE
-            # ---------------------------------
-
+            # MORE PROJECTS
             if len(remaining_projects) > 0:
 
                 project_ids = []
@@ -509,10 +533,6 @@ async def receive_message(request: Request):
                         "2. No"
                     )
                 )
-
-            # ---------------------------------
-            # NO MORE PROJECTS
-            # ---------------------------------
 
             else:
 
