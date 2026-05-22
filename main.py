@@ -421,92 +421,93 @@ async def receive_message(request: Request):
 
             return {"status": "ok"}
 
-    # ======================================================
-    # STEP 3 - WAITING AMOUNT
-    # ======================================================
+        # ======================================================
+        # STEP 3 - WAITING AMOUNT
+        # ======================================================
 
-if current_step == "waiting_amount":
+        if current_step == "waiting_amount":
 
-    try:
-        requested_amount = float(text)
+            try:
 
-    except:
+                requested_amount = float(text)
 
-        send_whatsapp_message(
-            from_number,
-            "❌ Ingresa un monto válido."
-        )
+            except:
 
-        return {"status": "ok"}
+                send_whatsapp_message(
+                    from_number,
+                    "❌ Ingresa un monto válido."
+                )
 
-    # ---------------------------------
-    # GET SELECTED PROJECT
-    # ---------------------------------
+                return {"status": "ok"}
 
-    projects = projects_sheet.get_all_records()
+            # ---------------------------------
+            # GET SELECTED PROJECT
+            # ---------------------------------
 
-    selected_project = None
+            projects = projects_sheet.get_all_records()
 
-    for project in projects:
+            selected_project = None
 
-        if (
-            str(project["project_id"])
-            == str(conversation["selected_project_id"])
-        ):
+            for project in projects:
 
-            selected_project = project
-            break
+                if (
+                    str(project["project_id"])
+                    == str(conversation["selected_project_id"])
+                ):
 
-    if selected_project is None:
+                    selected_project = project
+                    break
 
-        send_whatsapp_message(
-            from_number,
-            "❌ Proyecto no encontrado."
-        )
+            if selected_project is None:
 
-        delete_conversation(from_number)
+                send_whatsapp_message(
+                    from_number,
+                    "❌ Proyecto no encontrado."
+                )
 
-        return {"status": "ok"}
+                delete_conversation(from_number)
 
-    available_balance = float(
-        selected_project["available_balance"]
-    )
+                return {"status": "ok"}
 
-    # ---------------------------------
-    # VALIDATE AMOUNT
-    # ---------------------------------
-
-    if requested_amount > available_balance:
-
-        send_whatsapp_message(
-            from_number,
-            (
-                "❌ El monto excede el balance disponible.\n\n"
-                f"Balance disponible: ${available_balance}\n\n"
-                "Ingresa un monto válido."
+            available_balance = float(
+                selected_project["available_balance"]
             )
-        )
 
-        return {"status": "ok"}
+            # ---------------------------------
+            # VALIDATE AMOUNT
+            # ---------------------------------
 
-    # ---------------------------------
-    # SAVE AMOUNT
-    # ---------------------------------
+            if requested_amount > available_balance:
 
-    save_conversation(
-        from_number,
-        "waiting_description",
-        conversation["selected_project_id"],
-        requested_amount,
-        conversation["available_projects"]
-    )
+                send_whatsapp_message(
+                    from_number,
+                    (
+                        "❌ El monto excede el balance disponible.\n\n"
+                        f"Balance disponible: ${available_balance}\n\n"
+                        "Ingresa un monto válido."
+                    )
+                )
 
-    send_whatsapp_message(
-        from_number,
-        "Describe el trabajo realizado."
-    )
+                return {"status": "ok"}
 
-    return {"status": "ok"}
+            # ---------------------------------
+            # SAVE AMOUNT
+            # ---------------------------------
+
+            save_conversation(
+                from_number,
+                "waiting_description",
+                conversation["selected_project_id"],
+                requested_amount,
+                conversation["available_projects"]
+            )
+
+            send_whatsapp_message(
+                from_number,
+                "Describe el trabajo realizado."
+            )
+
+            return {"status": "ok"}
 
         # ======================================================
         # STEP 4 - WAITING DESCRIPTION
@@ -559,7 +560,6 @@ if current_step == "waiting_amount":
 
                         remaining_projects.append(project)
 
-            # MORE PROJECTS
             if len(remaining_projects) > 0:
 
                 project_ids = []
