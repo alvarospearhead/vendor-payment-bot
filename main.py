@@ -117,13 +117,13 @@ async def receive_message(request: Request):
         from_number = message["from"]
 
         # NORMALIZAR NUMERO
-       from_number = from_number.replace("+", "")
-    from_number = from_number.replace(" ", "")
-    from_number = from_number.replace("-", "")
+        from_number = from_number.replace("+", "")
+        from_number = from_number.replace(" ", "")
+        from_number = from_number.replace("-", "")
 
-    # FIX ARGENTINA
-    if from_number.startswith("549"):
-    from_number = "54" + from_number[3:]
+        # FIX ARGENTINA
+        if from_number.startswith("549"):
+            from_number = "54" + from_number[3:]
 
         text = message["text"]["body"].strip()
 
