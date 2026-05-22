@@ -115,6 +115,15 @@ async def receive_message(request: Request):
         message = body["entry"][0]["changes"][0]["value"]["messages"][0]
 
         from_number = message["from"]
+
+        # NORMALIZAR NUMERO
+        from_number = (
+            from_number
+            .replace("+", "")
+            .replace(" ", "")
+            .replace("-", "")
+        )
+
         text = message["text"]["body"].strip()
 
         print("FROM:", from_number)
@@ -143,6 +152,8 @@ async def receive_message(request: Request):
                     f"Vendor: {row['vendor_name']}\n"
                     f"Vendor ID: {row['vendor_id']}"
                 )
+
+                print("SENDING MESSAGE TO:", from_number)
 
                 send_whatsapp_message(
                     from_number,
