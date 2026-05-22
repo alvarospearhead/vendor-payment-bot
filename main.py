@@ -128,7 +128,8 @@ def save_conversation(
     phone_number,
     current_step,
     selected_project_id="",
-    requested_amount=""
+    requested_amount="",
+    available_projects=""
 ):
 
     conversations = conversation_sheet.get_all_records()
@@ -145,12 +146,13 @@ def save_conversation(
     if row_number:
 
         conversation_sheet.update(
-            f"A{row_number}:D{row_number}",
+            f"A{row_number}:E{row_number}",
             [[
                 phone_number,
                 current_step,
                 selected_project_id,
-                requested_amount
+                requested_amount,
+                available_projects
             ]]
         )
 
@@ -160,7 +162,8 @@ def save_conversation(
             phone_number,
             current_step,
             selected_project_id,
-            requested_amount
+            requested_amount,
+            available_projects
         ])
 
 # -----------------------------
@@ -190,6 +193,9 @@ async def receive_message(request: Request):
     print(json.dumps(body, indent=2))
 
     try:
+
+        if "messages" not in body["entry"][0]["changes"][0]["value"]:
+            return {"status": "ok"}
 
         message = body["entry"][0]["changes"][0]["value"]["messages"][0]
 
@@ -310,11 +316,17 @@ async def receive_message(request: Request):
                 "Estos son tus proyectos disponibles:\n\n"
             )
 
+            project_ids = []
+
             for index, project in enumerate(available_projects, start=1):
 
                 response_message += (
                     f"{index}. {project['project_name']}\n"
                     f"Balance: ${project['available_balance']}\n\n"
+                )
+
+                project_ids.append(
+                    str(project["project_id"])
                 )
 
             response_message += (
@@ -323,7 +335,10 @@ async def receive_message(request: Request):
 
             save_conversation(
                 from_number,
-                "waiting_project"
+                "waiting_project",
+                "",
+                "",
+                ",".join(project_ids)
             )
 
             send_whatsapp_message(
@@ -333,37 +348,41 @@ async def receive_message(request: Request):
 
             return {"status": "ok"}
 
+        current_step = conversation["current_step"]
+
         # ======================================================
         # STEP 2 - WAITING PROJECT
         # ======================================================
-
-        current_step = conversation["current_step"]
 
         if current_step == "waiting_project":
 
             selected_index = int(text)
 
+            available_project_ids = (
+                conversation["available_projects"]
+                .split(",")
+            )
+
             projects = projects_sheet.get_all_records()
 
-            vendor_projects = []
+            filtered_projects = []
 
             for project in projects:
 
-                if (
-                    project["vendor_id"] == vendor_id
-                    and str(project["active"]).upper() == "YES"
-                ):
+                if str(project["project_id"]) in available_project_ids:
 
-                    vendor_projects.append(project)
+                    filtered_projects.append(project)
 
-            selected_project = vendor_projects[selected_index - 1]
+            selected_project = filtered_projects[selected_index - 1]
 
             project_id = selected_project["project_id"]
 
             save_conversation(
                 from_number,
                 "waiting_amount",
-                project_id
+                project_id,
+                "",
+                conversation["available_projects"]
             )
 
             send_whatsapp_message(
@@ -391,7 +410,8 @@ async def receive_message(request: Request):
                 from_number,
                 "waiting_description",
                 conversation["selected_project_id"],
-                requested_amount
+                requested_amount,
+                conversation["available_projects"]
             )
 
             send_whatsapp_message(
@@ -422,18 +442,158 @@ async def receive_message(request: Request):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ])
 
-            send_whatsapp_message(
-                from_number,
-                (
-                    "✅ Payment Request creado\n\n"
-                    f"Request ID: {request_id}\n"
-                    f"Status: Pending"
-                )
-            )
+            # ---------------------------------
+            # CHECK REMAINING PROJECTS
+            # ---------------------------------
 
-            delete_conversation(from_number)
+            projects = projects_sheet.get_all_records()
+
+            payment_requests = payment_requests_sheet.get_all_records()
+
+            remaining_projects = []
+
+            for project in projects:
+
+                if (
+                    project["vendor_id"] == vendor_id
+                    and str(project["active"]).upper() == "YES"
+                ):
+
+                    has_pending = False
+
+                    for request_row in payment_requests:
+
+                        if (
+                            request_row["vendor_id"] == vendor_id
+                            and request_row["project_id"] == project["project_id"]
+                            and str(request_row["status"]).lower() == "pending"
+                        ):
+
+                            has_pending = True
+                            break
+
+                    if not has_pending:
+
+                        remaining_projects.append(project)
+
+            # ---------------------------------
+            # MORE PROJECTS AVAILABLE
+            # ---------------------------------
+
+            if len(remaining_projects) > 0:
+
+                project_ids = []
+
+                for project in remaining_projects:
+
+                    project_ids.append(
+                        str(project["project_id"])
+                    )
+
+                save_conversation(
+                    from_number,
+                    "ask_another_request",
+                    "",
+                    "",
+                    ",".join(project_ids)
+                )
+
+                send_whatsapp_message(
+                    from_number,
+                    (
+                        "✅ Payment Request creado\n\n"
+                        f"Request ID: {request_id}\n"
+                        f"Status: Pending\n\n"
+                        "¿Deseas crear otro request?\n\n"
+                        "1. Sí\n"
+                        "2. No"
+                    )
+                )
+
+            # ---------------------------------
+            # NO MORE PROJECTS
+            # ---------------------------------
+
+            else:
+
+                send_whatsapp_message(
+                    from_number,
+                    (
+                        "✅ Payment Request creado\n\n"
+                        f"Request ID: {request_id}\n"
+                        f"Status: Pending\n\n"
+                        "No tienes más proyectos disponibles."
+                    )
+                )
+
+                delete_conversation(from_number)
 
             return {"status": "ok"}
+
+        # ======================================================
+        # STEP 5 - ASK ANOTHER REQUEST
+        # ======================================================
+
+        if current_step == "ask_another_request":
+
+            if text == "1":
+
+                projects = projects_sheet.get_all_records()
+
+                available_project_ids = (
+                    conversation["available_projects"]
+                    .split(",")
+                )
+
+                response_message = (
+                    f"Hola {vendor_name} 👋\n\n"
+                    "Estos son tus proyectos disponibles:\n\n"
+                )
+
+                filtered_projects = []
+
+                for project in projects:
+
+                    if str(project["project_id"]) in available_project_ids:
+
+                        filtered_projects.append(project)
+
+                for index, project in enumerate(filtered_projects, start=1):
+
+                    response_message += (
+                        f"{index}. {project['project_name']}\n"
+                        f"Balance: ${project['available_balance']}\n\n"
+                    )
+
+                response_message += (
+                    "Responde con el número del proyecto."
+                )
+
+                save_conversation(
+                    from_number,
+                    "waiting_project",
+                    "",
+                    "",
+                    conversation["available_projects"]
+                )
+
+                send_whatsapp_message(
+                    from_number,
+                    response_message
+                )
+
+                return {"status": "ok"}
+
+            else:
+
+                send_whatsapp_message(
+                    from_number,
+                    "Perfecto 👌\n\nTus requests fueron enviados correctamente."
+                )
+
+                delete_conversation(from_number)
+
+                return {"status": "ok"}
 
     except Exception as e:
 
