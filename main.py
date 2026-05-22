@@ -33,7 +33,11 @@ try:
 
     client = gspread.authorize(creds)
 
-    sheet = client.open("DATA_BASE_REQUEST").worksheet("vendors")
+    spreadsheet = client.open("DATA_BASE_REQUEST")
+
+    vendors_sheet = spreadsheet.worksheet("vendors")
+    projects_sheet = spreadsheet.worksheet("projects")
+    payment_requests_sheet = spreadsheet.worksheet("payment_request")
 
     print("GOOGLE SHEETS CONNECTED")
 
@@ -41,7 +45,9 @@ except Exception as e:
 
     print("GOOGLE SHEETS ERROR:", str(e))
 
-    sheet = None
+    vendors_sheet = None
+    projects_sheet = None
+    payment_requests_sheet = None
 
 # -----------------------------
 # SEND WHATSAPP MESSAGE
@@ -130,7 +136,11 @@ async def receive_message(request: Request):
         print("FROM:", from_number)
         print("MESSAGE:", text)
 
-        if sheet is None:
+        # -----------------------------
+        # VALIDAR SHEETS
+        # -----------------------------
+
+        if vendors_sheet is None:
 
             send_whatsapp_message(
                 from_number,
@@ -139,37 +149,124 @@ async def receive_message(request: Request):
 
             return {"status": "error"}
 
-        records = sheet.get_all_records()
+        # -----------------------------
+        # GET VENDOR
+        # -----------------------------
 
-        found = False
+        vendors = vendors_sheet.get_all_records()
 
-        for row in records:
+        vendor_found = None
 
-            vendor = str(row["vendor_name"]).lower().strip()
+        for vendor in vendors:
 
-            if vendor == text.lower():
+            phone = str(vendor["phone_number"])
 
-                response_message = (
-                    f"Vendor: {row['vendor_name']}\n"
-                    f"Vendor ID: {row['vendor_id']}"
-                )
+            phone = phone.replace("+", "")
+            phone = phone.replace(" ", "")
+            phone = phone.replace("-", "")
 
-                print("SENDING MESSAGE TO:", from_number)
+            # FIX ARGENTINA
+            if phone.startswith("549"):
+                phone = "54" + phone[3:]
 
-                send_whatsapp_message(
-                    from_number,
-                    response_message
-                )
+            if phone == from_number:
 
-                found = True
+                vendor_found = vendor
                 break
 
-        if not found:
+        if vendor_found is None:
 
             send_whatsapp_message(
                 from_number,
-                "Vendor not found."
+                "❌ Your number is not registered."
             )
+
+            return {"status": "error"}
+
+        vendor_id = vendor_found["vendor_id"]
+        vendor_name = vendor_found["vendor_name"]
+
+        # -----------------------------
+        # GET ACTIVE PROJECTS
+        # -----------------------------
+
+        projects = projects_sheet.get_all_records()
+
+        active_projects = []
+
+        for project in projects:
+
+            if (
+                project["vendor_id"] == vendor_id
+                and str(project["active"]).upper() == "YES"
+            ):
+
+                active_projects.append(project)
+
+        # -----------------------------
+        # GET PENDING REQUESTS
+        # -----------------------------
+
+        payment_requests = payment_requests_sheet.get_all_records()
+
+        blocked_project_ids = []
+
+        for request_row in payment_requests:
+
+            if (
+                request_row["vendor_id"] == vendor_id
+                and str(request_row["status"]).lower() == "pending"
+            ):
+
+                blocked_project_ids.append(
+                    request_row["project_id"]
+                )
+
+        # -----------------------------
+        # FILTER AVAILABLE PROJECTS
+        # -----------------------------
+
+        available_projects = []
+
+        for project in active_projects:
+
+            if project["project_id"] not in blocked_project_ids:
+
+                available_projects.append(project)
+
+        # -----------------------------
+        # BUILD RESPONSE
+        # -----------------------------
+
+        if len(available_projects) == 0:
+
+            response_message = (
+                f"Hola {vendor_name} 👋\n\n"
+                "No tienes proyectos disponibles para nuevos payment requests."
+            )
+
+        else:
+
+            response_message = (
+                f"Hola {vendor_name} 👋\n\n"
+                "Estos son tus proyectos disponibles:\n\n"
+            )
+
+            for index, project in enumerate(available_projects, start=1):
+
+                response_message += (
+                    f"{index}. {project['project_name']}\n"
+                    f"Balance: ${project['available_balance']}\n\n"
+                )
+
+            response_message += (
+                "Responde con el número del proyecto."
+            )
+
+        send_whatsapp_message(
+            from_number,
+            response_message
+        )
 
     except Exception as e:
 
